@@ -1,0 +1,262 @@
+Sub Project_Work()
+
+Worksheets("In-Output").Select
+Range("C20:C23").ClearContents
+
+'SETTING --------------------------------------------------------------------------------------------------------------------------------------------------
+Lambda = Range("C8") 'Lambda of the exponential
+T = Range("C9") 'Number of monthly observations
+
+MC = Range("C10") 'Number of Monte Carlo simulations
+
+G_singolo = Range("C12") 'Loss if 1 machine breaks down
+G_doppio = Range("C13") 'Loss if both machines break down
+
+Liv_conf = Range("C11") '99% confidence level for VaR
+
+Premio = Range("C14") 'Insurance premium, how much do I pay for insurance
+Copertura_max = Range("C15") 'Insurance ceiling
+
+'DEBUGGING AND INPUT CONTROL' ----------------------------------------------------------------------------------------------------------------------------
+'Checking whether the confidence level is less than 100%
+If Liv_conf <= 0 Or Liv_conf >= 1 Then
+    MsgBox "Error: Enter a confidence level between 0 and 1.", vbCritical
+    Exit Sub
+End If
+
+'Checking whether input cells contain values
+If IsEmpty(Lambda) Or IsEmpty(T) Or IsEmpty(MC) Or IsEmpty(G_singolo) Or IsEmpty(G_doppio) Or IsEmpty(Liv_conf) Or IsEmpty(Premio) Or IsEmpty(Copertura_max) Then
+    MsgBox "Error: Please enter all necessary parameters.", vbCritical
+    Exit Sub
+End If
+
+'Checking whether input cells contain numeric values
+If Not IsNumeric(Lambda) Or Not IsNumeric(T) Or Not IsNumeric(MC) Or Not IsNumeric(G_singolo) Or Not IsNumeric(G_doppio) Or Not IsNumeric(Liv_conf) Or Not IsNumeric(Premio) Or Not IsNumeric(Copertura_max) Then
+    MsgBox "Error: Enter numeric values for parameters.", vbCritical
+    Exit Sub
+End If
+
+'Checking whether input cells contain positive values
+If Lambda <= 0 Or T <= 0 Or MC <= 0 Or G_singolo < 0 Or G_doppio < 0 Or Premio < 0 Or Copertura_max < 0 Then
+    MsgBox "Error: Parameters must be positive values.", vbCritical
+    Exit Sub
+End If
+
+'Checking whether the insurance premium is less than the reimbursement
+If Premio >= Copertura_max Then
+    MsgBox "Error: The insurance premium must be less than the insurance limit.", vbCritical
+    Exit Sub
+End If
+
+'MONTE CARLO SIMULATION ----------------------------------------------------------------------------------------------------------------------------------
+Dim Perdita_scenari() As Double  'I define a vector in which I save the losses of each scenario
+ReDim Perdita_scenari(1 To MC) 'I define the size of the vector variably
+Somma_perdite_totali = 0 'I define and equalize to zero, so the variable resets every time we run the program
+
+For h = 1 To MC
+    Perdita_totale = 0 'I define and equalize to zero, so I guarantee independence between MC scenarios
+    
+    For i = 1 To T
+        Perdita = 0 'I define it and equalize it to zero to ensure independence between months
+        
+        'Definition exponential probability
+        P = 1 - Exp(-Lambda * i) 'I determine the CDF of that number --> probability that the machine will fail
+
+        'Definition of breakdown scenarios: Machine 1, 2 or both
+        U1 = Rnd 'Break for machine 1
+        U2 = Rnd 'Break for machine 2
+        U3 = Rnd 'Random number to quantify single breakage damage
+
+        If U1 <= P And U2 <= P Then 'Returns True if both are true
+            Perdita = G_doppio
+        ElseIf U1 <= P Xor U2 <= P Then 'Returns true if only 1 of the two is true
+            Perdita = G_singolo * U3
+        Else
+            Perdita = 0
+        End If
+        Perdita_totale = Perdita_totale + Perdita 'I calculate the annual loss
+    Next i
+    Perdita_scenari(h) = Perdita_totale
+    Somma_perdite_totali = Somma_perdite_totali + Perdita_totale
+Next h
+
+'We print the scenario loss vector for a detailed analysis of its composition, in a sheet called Details
+Worksheets("Details").Range("A4:MMM26").ClearContents
+colonna = 2
+riga = 6
+Worksheets("Details").Cells(5, 2) = "LOSSES"
+Worksheets("Details").Cells(5, 1) = "SCENARIOS"
+For i = 1 To MC
+    Worksheets("Details").Cells(riga, colonna) = Perdita_scenari(i)
+    Worksheets("Details").Cells(riga, colonna).NumberFormat = "#,##0.00 €" 'cell formatting
+    Worksheets("Details").Cells(riga, colonna - 1) = " # " & i
+    If (i Mod 20) = 0 Then
+        colonna = colonna + 2
+        riga = 5
+        If i <> MC Then
+            Worksheets("Details").Cells(riga, colonna) = "LOSSES"
+            Worksheets("Details").Cells(riga, colonna - 1) = "SCENARIOS"
+        End If
+    End If
+    riga = riga + 1
+Next i
+
+'Let's calculate the average Monte Carlo
+MC_mean = Somma_perdite_totali / MC 'I divide the sum of the losses of all scenarios by the number of scenarios
+Range("C20") = MC_mean
+
+'VaR CALCULATION -----------------------------------------------------------------------------------------------------------------------------------------
+'I sort the elements of the vector in descending order
+If MC > 1 Then 'I insert it to avoid array position problems because a vector of 1 element is already sorted
+    For i = 1 To MC - 1
+        For j = i + 1 To MC
+            If Perdita_scenari(i) < Perdita_scenari(j) Then
+                temp = Perdita_scenari(i)
+                Perdita_scenari(i) = Perdita_scenari(j)
+                Perdita_scenari(j) = temp
+            End If
+        Next j
+    Next i
+End If
+
+'I determine the position in which the VaR falls
+Alpha = 1 - Liv_conf 'calculating the alpha
+Pos = Alpha * MC 'I find the quantile
+
+'We define VaR by interpolating the positions of the vector if they are not integers
+If Pos < 1 Then
+    Range("C21").Value = "> " & Round(Perdita_scenari(1), 2) & "€ **"
+Else
+    'NOTE the if condition is not necessary because in case the number is an integer, the decimal part is zero and cancels the weighting in the formula
+    Parte_int = Int(Pos)
+    Parte_dec = Pos - Parte_int
+    Var = Perdita_scenari(Parte_int) + Parte_dec * (Perdita_scenari(Parte_int + 1) - Perdita_scenari(Parte_int))
+    Range("C21") = Var
+End If
+
+'LET'S EVALUATE THE INSURANCE --------------------------------------------------------------------------------------------------------------------------
+'We define how much insurance reimburses us
+If MC_mean < Copertura_max Then
+    RA = MC_mean 'RA = Insurance Reimbursement
+Else
+    RA = Copertura_max
+End If
+
+'We evaluate the convenience
+If (RA - Premio) > 0 Then
+    Risultato = "BUY"
+    Range("C22") = Risultato 'agrees
+Else
+    Risultato = "DON'T BUY"
+    Range("C22") = Risultato 'not convenient
+End If
+
+'Let's count how many scenarios find it convenient to use insurance
+Cont = 0
+For j = LBound(Perdita_scenari) To UBound(Perdita_scenari)
+
+        If Perdita_scenari(j) > Premio Then
+        Cont = Cont + 1
+    End If
+Next j
+Perc = Cont / MC
+Cells(23, 3) = Perc
+
+'WE CONSTRUCT A GRAPH SHOWING THE DISTRIBUTION----------------------------------------------------------------------------------------------------------
+'I calculate the interval of the plot bars
+totale = 0
+diff = 0
+For i = 1 To UBound(Perdita_scenari)
+    diff = (Perdita_scenari(i) - MC_mean) ^ 2
+    totale = totale + diff
+Next i
+
+varianza = totale / MC
+volatilità = Sqr(varianza)
+
+oss_max = Perdita_scenari(1) * 1.1 'For graphical issues the x-axis does not display values beyond this number
+
+'Calculate the 'amplitude of the interval according to Scott's rule
+ampiezza_intervallo = (3.5 * volatilità) / (MC ^ (1 / 3))
+num_barre = Round(oss_max / ampiezza_intervallo, 0) 'I take rounding to have a sensible number
+
+'We define intervals
+Dim intervallo() As Double 'I define a vector that contains the graph intervals for each bar of the histogram
+ReDim intervallo(1 To num_barre)
+
+'I initialize the intervals
+For i = 1 To num_barre
+    intervallo(i) = ampiezza_intervallo * i
+Next i
+
+Dim ris() As Double ' variable result
+ReDim ris(1 To UBound(intervallo)) 'will contain in each element the number of losses that are in each interval
+    
+For i = 1 To UBound(intervallo)
+    Conteggio = 0
+    For j = LBound(Perdita_scenari) To UBound(Perdita_scenari)
+        If i = 1 Then
+            If Perdita_scenari(j) < intervallo(i) Then
+                Conteggio = Conteggio + 1
+            End If
+        End If
+        If i > 1 Then
+            If Perdita_scenari(j) >= intervallo(i - 1) And Perdita_scenari(j) < intervallo(i) Then
+                Conteggio = Conteggio + 1
+            End If
+        End If
+    Next j
+    ris(i) = Conteggio
+Next i
+
+' Deletes any existing graphics in the active sheet
+On Error Resume Next
+ActiveSheet.ChartObjects(1).Delete
+On Error GoTo 0
+
+' Set the size and position of the graph
+chartLeft = Range("E7").Left
+chartTop = Range("E7").Top
+chartWidth = Range("R7").Left + Range("R7").Width - Range("E7").Left
+chartHeight = Range("R23").Top + Range("R23").Height - Range("E7").Top
+
+ActiveSheet.Shapes.AddChart2(240, xlColumnClustered, chartLeft, chartTop, chartWidth, chartHeight).Select
+
+With ActiveChart
+    ' Set the X and Y values of the series.
+    .SeriesCollection.NewSeries
+    .SeriesCollection(1).XValues = intervallo
+    .SeriesCollection(1).Values = ris
+    
+    ' Set the type of column chart (histogram)
+     .SeriesCollection(1).ChartType = xlColumnClustered
+    
+    ' Assign a name to the series
+    .SeriesCollection(1).Name = "Monte Carlo Simulations"
+    
+    ' Labels for axes
+    .Axes(xlCategory, xlPrimary).HasTitle = True
+    .Axes(xlCategory, xlPrimary).AxisTitle.Text = "Loss intervals"
+    .Axes(xlValue, xlPrimary).HasTitle = True
+    .Axes(xlValue, xlPrimary).AxisTitle.Text = "Frequencies"
+    
+    ' Changing the color of columns
+    .SeriesCollection(1).Format.Fill.ForeColor.RGB = RGB(128, 0, 32)
+
+    ' Add labels on the x-axis (concatenating lower and upper bound with rounding)
+    Dim labels() As String
+    ReDim labels(1 To UBound(intervallo))
+    For i = 1 To UBound(intervallo)
+        If i = 1 Then
+        labels(i) = Format(0) & "-" & Format(intervallo(i), "0.0")
+        Else
+        labels(i) = Format(intervallo(i) - ampiezza_intervallo, "0.0") & "-" & Format(intervallo(i), "0.0")
+        End If
+    Next i
+    .Axes(xlCategory).CategoryNames = labels
+    .Axes(xlCategory).TickLabels.Orientation = 45 ' Set the desired angle (in degrees)
+End With
+
+End Sub
+
+
