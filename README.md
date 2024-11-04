@@ -1,1 +1,4 @@
 # VBA-evaluation-insurance
+ENGLISH - In this project carried out for a university course, I develop a code in VBA on Excel to evaluate the convenience of an insurance coverage for a company that has invested in a major machine. In this section you will find both the Excel file that can be downloaded and leaves freedom to modify all the parameters at will, and a .txt file in which I report the code for a more immediate view.
+
+ITALIANO - In questo progetto svolto per un corso universitario, sviluppo un codice in VBA su Excel per valutare la convenienza di una copertura assicurativa per un'azienda che ha investito su un macchinario importante. In questa sezione troverete sia il file Excel che può essere scaricato e lascia libertà di modificare tutti i parametri a piacimento, sia un file .txt nel quale riporto il codice per una più immediata visione.
